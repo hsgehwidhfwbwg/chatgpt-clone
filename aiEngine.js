@@ -1,5 +1,7 @@
 const AIEngine = {
     _controller: null,
+    _BACKEND_URL: 'https://chatgpt-clone-six-theta.vercel.app/api/chat',
+    
     _QUIZ_JSON_INSTRUCTION: 'You must respond ONLY with a valid JSON object containing an array of questions. Format: { "quiz": [ { "q": "question text", "options": ["Option A text", "Option B text", "Option C text", "Option D text"], "answer": "correct option text exactly as it appears in options" } ] }',
     
     _THINKING_INSTRUCTION: `IMPORTANT INSTRUCTIONS:
@@ -44,23 +46,6 @@ Do not skip these tags.`,
     },
     async webSearch(query) {
         try {
-            // Tavily API Integration
-            const tavilyKey = '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';
-            try {
-                const tvRes = await fetch('https://api.tavily.com/search', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: tavilyKey, query, search_depth: 'basic' }),
-                    signal: AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined
-                });
-                if (tvRes.ok) {
-                    const tvData = await tvRes.json();
-                    if (tvData.results && tvData.results.length > 0) {
-                        return tvData.results.map(r => ({ title: r.title, snippet: r.content }));
-                    }
-                }
-            } catch (e) { console.warn('Tavily search failed, falling back to DuckDuckGo', e); }
-
             const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, { signal: AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined });
             if (!res.ok) return null;
             const data = await res.json();
@@ -88,26 +73,6 @@ Do not skip these tags.`,
         }
         return prompt;
     },
-    
-    // IDE Auto-Fix feature helper
-    async autoFixCode(code, errorText, lang, provider, apiKey, model) {
-        const prompt = `Fix the following ${lang} code based on the error. Return ONLY the fixed code without markdown backticks or explanations. \n\nERROR:\n${errorText}\n\nCODE:\n${code}`;
-        const messages = [{ sender: 'user', text: prompt }];
-        const sys = "You are an autonomous AI debugger. Only output the fixed code.";
-        if (provider !== 'simulated' && apiKey) {
-            try {
-                let fixed = "";
-                if (provider === 'gemini') {
-                    fixed = await this.fetchGemini(apiKey, messages, model, sys, null);
-                } else {
-                    fixed = await this.fetchOpenAICompatible(provider, apiKey, messages, model, sys, null);
-                }
-                return fixed.replace(/^```[a-z]*\n/, '').replace(/\n```$/, '').trim();
-            } catch(e) { console.error('Auto-fix API failed:', e); }
-        }
-        return code.replace(/console\.log/g, '// console.log'); // Fallback
-    },
-
     async generateResponse(messages, model, systemPrompt, webSearchActive, onChunk) {
         const settings = await Storage.getSettings();
 
@@ -141,166 +106,58 @@ Do not skip these tags.`,
             }
         }
 
-        if (provider !== 'simulated' && apiKey) {
+        if (provider !== 'simulated') {
             try {
-                const call = () => provider === 'gemini'
-                    ? this.fetchGemini(apiKey, messages, model, systemPrompt, onChunk)
-                    : this.fetchOpenAICompatible(provider, apiKey, messages, model, systemPrompt, onChunk);
+                const call = () => this.fetchViaBackend(provider, messages, model, systemPrompt, onChunk);
                 return await Utils.retryWithBackoff(call, 3, 1000);
             } catch (err) {
                 if (err.name === 'AbortError') throw err;
-                console.warn(`${provider} failed → simulation:`, err);
+                console.warn(`${provider} backend failed → simulation:`, err);
                 if (window.ChatRenderer) ChatRenderer.showToast(`${provider} failed — simulation`);
             }
         } else {
-            console.warn('[AIEngine] Falling back to simulated mode. provider=', provider, '| hasKey=', !!apiKey);
+            console.warn('[AIEngine] Falling back to simulated mode.');
         }
 
         return await this.generateSimulatedResponse(messages, model, systemPrompt, webSearchActive, onChunk, settings.streamSpeed || 1.0);
     },
-    async fetchOpenAICompatible(providerKey, apiKey, messages, model, systemPrompt, onChunk) {
-        const cfg = this.PROVIDERS[providerKey];
-        if (!cfg) throw new Error(`Unknown: ${providerKey}`);
+    async fetchViaBackend(provider, messages, model, systemPrompt, onChunk) {
         const payloadMessages = [
             { role: 'system', content: systemPrompt },
-            ...messages.map((m) => {
-                // Multimodal Vision support
-                if (m.images && m.images.length > 0) {
-                    return {
-                        role: m.sender === 'user' ? 'user' : 'assistant',
-                        content: [
-                            { type: 'text', text: m.text },
-                            ...m.images.map(img => ({ type: 'image_url', image_url: { url: img } }))
-                        ]
-                    };
-                }
-                return { role: m.sender === 'user' ? 'user' : 'assistant', content: m.text };
-            })
+            ...messages.map((m) => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }))
         ];
         this._controller = new AbortController();
-        const response = await fetch(cfg.endpoint, {
+        const response = await fetch(this._BACKEND_URL, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...cfg.authHeader(apiKey) },
-            body: JSON.stringify({ model: model || cfg.defaultModel, messages: payloadMessages, stream: !!onChunk, temperature: 0.7 }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, model: model || this.PROVIDERS[provider]?.defaultModel, messages: payloadMessages }),
             signal: this._controller.signal
         });
         if (!response.ok) {
             const errText = await response.text().catch(() => response.statusText);
-            throw Object.assign(new Error(`${providerKey} ${response.status}: ${errText.slice(0, 200)}`), { status: response.status });
+            throw Object.assign(new Error(`Backend error ${response.status}: ${errText.slice(0, 200)}`), { status: response.status });
         }
-        
-        if (!onChunk) {
-            const data = await response.json();
-            return data.choices[0].message.content;
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let fullText = ''; let buffer = '';
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-            for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                const dataStr = line.slice(6).trim();
-                if (!dataStr || dataStr === '[DONE]') continue;
-                try {
-                    const parsed = JSON.parse(dataStr);
-                    let token = parsed.choices?.[0]?.delta?.content || '';
-                    if (typeof token === 'object' && token !== null) {
-                        token = JSON.stringify(token);
-                    }
-                    if (token) { fullText += token; onChunk?.(token, fullText); }
-                } catch {}
-            }
+        const data = await response.json();
+        const fullText = data.choices?.[0]?.message?.content || data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (onChunk && fullText) {
+            onChunk(fullText, fullText);
         }
         this._controller = null;
         return fullText;
     },
+    async fetchOpenAICompatible(providerKey, apiKey, messages, model, systemPrompt, onChunk) {
+        return this.fetchViaBackend(providerKey, messages, model, systemPrompt, onChunk);
+    },
     async fetchGemini(apiKey, messages, model, systemPrompt, onChunk) {
-        const cfg = this.PROVIDERS.gemini;
-        const useModel = model || cfg.defaultModel;
-        const contents = messages.map((m) => {
-            const parts = [{ text: m.text }];
-            // Multimodal Vision Support for Gemini
-            if (m.images && m.images.length > 0) {
-                m.images.forEach(img => {
-                    const match = img.match(/^data:(image\/[a-z]+);base64,(.*)$/);
-                    if (match) parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
-                });
-            }
-            return {
-                role: m.sender === 'user' ? 'user' : 'model',
-                parts
-            };
-        });
-        const body = {
-            contents,
-            systemInstruction: { parts: [{ text: systemPrompt }] },
-            generationConfig: { temperature: 0.7 }
-        };
-        this._controller = new AbortController();
-        const response = await fetch(cfg.endpoint(useModel, apiKey), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-            signal: this._controller.signal
-        });
-        if (!response.ok) {
-            const errText = await response.text().catch(() => response.statusText);
-            throw Object.assign(new Error(`gemini ${response.status}: ${errText.slice(0, 200)}`), { status: response.status });
-        }
-        
-        if (!onChunk) {
-             const data = await response.json();
-             return data[0]?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let fullText = ''; let buffer = '';
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-            for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                const dataStr = line.slice(6).trim();
-                if (!dataStr || dataStr === '[DONE]') continue;
-                try {
-                    const parsed = JSON.parse(dataStr);
-                    let token = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                    if (typeof token === 'object' && token !== null) {
-                        token = JSON.stringify(token);
-                    }
-                    if (token) { fullText += token; onChunk?.(token, fullText); }
-                } catch {}
-            }
-        }
-        this._controller = null;
-        return fullText;
+        return this.fetchViaBackend('gemini', messages, model, systemPrompt, onChunk);
     },
     async listModels(providerKey, apiKey) {
         const cfg = this.PROVIDERS[providerKey];
         if (!cfg) throw new Error(`Unknown: ${providerKey}`);
         if (providerKey === 'gemini') {
-            const res = await fetch(cfg.modelsEndpoint(apiKey));
-            if (!res.ok) throw new Error(`Gemini ${res.status}`);
-            const data = await res.json();
-            return (data.models || [])
-                .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
-                .map((m) => m.name.replace(/^models\//, ''));
+            return ['gemini-2.0-flash', 'gemini-1.5-pro'];
         }
-        const res = await fetch(cfg.modelsEndpoint, { headers: cfg.authHeader(apiKey) });
-        if (!res.ok) throw new Error(`${providerKey} ${res.status}`);
-        const data = await res.json();
-        const list = data.data || data.models || [];
-        return list.map((m) => m.id || m.name).filter(Boolean).sort();
+        return ['gpt-4o', 'gpt-3.5-turbo', 'deepseek-chat'];
     },
     async generateSimulatedResponse(messages, model, systemPrompt, webSearchActive, onChunk, speed = 1.0) {
         const lastUserMsg = [...messages].reverse().find((m) => m.sender === 'user')?.text || '';
@@ -313,12 +170,57 @@ Do not skip these tags.`,
             const quizObj = {
                 quiz: [
                     { q: "If 3x - 7 = 2x + 9, what is the value of x?", options: ["-16", "9", "16", "2"], answer: "16" },
-                    { q: "What is the capital of France?", options: ["London", "Berlin", "Paris", "Madrid"], answer: "Paris" }
+                    { q: "What is the capital of France?", options: ["London", "Berlin", "Paris", "Madrid"], answer: "Paris" },
+                    { q: "Which planet is known as the Red Planet?", options: ["Venus", "Mars", "Jupiter", "Saturn"], answer: "Mars" },
+                    { q: "What does HTML stand for?", options: ["HyperText Markup Language", "HighText Machine Language", "HyperTool Markup Language", "Hyperlinks and Text Markup Language"], answer: "HyperText Markup Language" },
+                    { q: "Which of these is NOT a JavaScript data type?", options: ["String", "Number", "Boolean", "Character"], answer: "Character" }
                 ]
             };
             const quizJson = JSON.stringify(quizObj, null, 2);
             let currentQuiz = '';
             const qWords = quizJson.split(/(\s+)/);
+            const baseDelay = Math.max(2, 20 / speed);
+            for (const word of qWords) {
+                currentQuiz += word;
+                onChunk?.(word, currentQuiz);
+                await new Promise((r) => setTimeout(r, Math.random() * baseDelay + baseDelay / 2));
+            }
+            return currentQuiz;
+        }
+
+        if (/(quiz|test|sawal|pooch|question)/i.test(lower)) {
+            const quizHtml = `
+Chalo! 🔥 Diagnostic Quiz shuru karte hain. Target: 100% Score! 🎯
+
+Pehle apni current level check karo. Har question ko khud solve karna.
+
+<div class="quiz-card" id="quiz-card-1">
+    <div class="quiz-header">
+        <span class="nav"><i class="fa-solid fa-chevron-left"></i></span>
+        <span>1 of 10</span>
+        <div class="flex gap-4">
+            <span class="nav"><i class="fa-regular fa-lightbulb"></i></span>
+            <span class="nav"><i class="fa-regular fa-copy"></i></span>
+        </div>
+    </div>
+    <div class="quiz-question">
+        If 3x - 7 = 2x + 9, what is the value of x?
+    </div>
+    <div class="quiz-options">
+        <div class="quiz-opt" onclick="window.selectQuizOption(this, 'A')"><div class="circle">A</div> -16</div>
+        <div class="quiz-opt" onclick="window.selectQuizOption(this, 'B')"><div class="circle">B</div> 9</div>
+        <div class="quiz-opt" onclick="window.selectQuizOption(this, 'C')"><div class="circle">C</div> 16</div>
+        <div class="quiz-opt" onclick="window.selectQuizOption(this, 'D')"><div class="circle">D</div> 2</div>
+    </div>
+    <div class="quiz-footer">
+        <button class="quiz-next-btn" onclick="window.submitQuiz(this)">Next</button>
+    </div>
+</div>
+
+*Tip: Sahi jawab C (16) hai. (3x - 2x = 9 + 7)*
+`;
+            let currentQuiz = '';
+            const qWords = quizHtml.split(/(\s+)/);
             const baseDelay = Math.max(2, 20 / speed);
             for (const word of qWords) {
                 currentQuiz += word;
@@ -361,6 +263,31 @@ processDataPipeline([{ id: 101 }, { id: 102 }])
 1. **Bounded concurrency** — protects APIs
 2. **Input validation** — early failure
 3. **Deterministic output**`;
+        } else if (/\b(quantum|explain|what is|how to|define)\b/.test(lower)) {
+            responseMarkdown = `<thought>
+User is asking for an explanation. I will break it down into simple points.
+</thought>
+${prefix}### Explanation
+
+**Classical bits** are 0 or 1. **Qubits** can be *superposition* of both.
+
+| Concept | Meaning |
+|---|---|
+| Superposition | 0, 1, or both |
+| Entanglement | Correlated qubits |
+| Interference | Amplifies correct answers |
+
+> **Analogy:** Classical = sequential pages. Quantum = all at once.`;
+        } else if (/^(hi|hello|hey|salam|assalam)/.test(lower)) {
+            responseMarkdown = `Hello! 👋 Ready to help.
+
+Try:
+- **Write code**
+- **Explain concepts**
+- **Draft text**
+- **Take a Quiz** (Type: "Mera quiz lo")
+
+What would you like?`;
         } else {
             responseMarkdown = `<thought>
 User is asking a general question. I'll provide a structured response.
@@ -386,4 +313,4 @@ Want me to expand?`;
         }
         return currentText;
     }
-};
+}
