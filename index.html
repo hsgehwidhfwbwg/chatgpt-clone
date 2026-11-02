@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="ChatGPT Clone with multi-provider, memory, personas, comparison">
+    <meta name="theme-color" content="#212121">
+    <title>ChatGPT — AI Assistant</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { gpt: {
+                sidebar: '#171717', main: '#212121', card: '#2f2f2f',
+                hover: '#383838', user: '#2f2f2f', border: '#424242', accent: '#10a37f'
+            }}}}
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .quiz-card { background-color: #2f2f2f; border: 1px solid #424242; border-radius: 12px; padding: 16px; margin-top: 10px; margin-bottom: 10px; max-width: 450px; font-family: system-ui, -apple-system, sans-serif; }
+        html.light .quiz-card { background-color: #f3f4f6; border-color: #e5e7eb; }
+        .quiz-header { display: flex; justify-content: space-between; align-items: center; color: #9ca3af; font-size: 12px; margin-bottom: 16px; }
+        .quiz-header .nav { cursor: pointer; padding: 4px; }
+        .quiz-header .nav:hover { color: white; }
+        html.light .quiz-header .nav:hover { color: black; }
+        .quiz-question { font-size: 15px; color: #e5e7eb; margin-bottom: 16px; line-height: 1.5; }
+        html.light .quiz-question { color: #1f2937; }
+        .quiz-options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+        .quiz-opt { display: flex; align-items: center; padding: 10px 12px; border-radius: 8px; background: transparent; border: 1px solid #424242; cursor: pointer; transition: all 0.2s; color: #d1d5db; font-size: 14px; }
+        html.light .quiz-opt { border-color: #d1d5db; color: #374151; }
+        .quiz-opt:hover { background-color: #383838; }
+        html.light .quiz-opt:hover { background-color: #e5e7eb; }
+        .quiz-opt .circle { width: 24px; height: 24px; border-radius: 50%; border: 1px solid #6b7280; display: flex; align-items: center; justify-content: center; margin-right: 12px; font-size: 12px; font-weight: bold; }
+        .quiz-opt.selected { border-color: #10a37f; background-color: rgba(16, 163, 127, 0.1); }
+        .quiz-opt.selected .circle { background-color: #10a37f; color: white; border-color: #10a37f; }
+        .quiz-footer { display: flex; justify-content: flex-end; }
+        .quiz-next-btn { background: transparent; border: 1px solid #424242; color: #d1d5db; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+        .quiz-next-btn:hover { background-color: #383838; }
+        #artifactPanel { display: none; }
+        #artifactPanel.is-open { display: flex; }
+        @media (max-width: 767px) {
+            #artifactPanel.is-open {
+                position: fixed; inset: 0; width: 100% !important; z-index: 60;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gpt-main text-slate-100 font-sans antialiased h-screen flex overflow-hidden selection:bg-teal-500 selection:text-white">
+
+<div id="sidebarOverlay" class="fixed inset-0 bg-black/60 z-40 lg:hidden hidden backdrop-blur-sm"></div>
+
+<aside id="sidebar" class="fixed lg:static inset-y-0 left-0 z-50 w-72 bg-gpt-sidebar border-r border-gpt-border flex flex-col justify-between transform -translate-x-full lg:translate-x-0 transition-transform duration-300">
+    <div class="p-3 flex items-center justify-between">
+        <button id="newChatBtn" class="flex-1 flex items-center justify-between px-3 py-2.5 rounded-lg border border-gpt-border hover:bg-gpt-hover text-sm font-medium">
+            <div class="flex items-center space-x-2">
+                <div class="w-6 h-6 rounded-full bg-white text-black flex items-center justify-center font-bold text-xs"><i class="fa-solid fa-plus"></i></div>
+                <span>New chat</span>
+            </div>
+            <i class="fa-regular fa-pen-to-square text-xs text-slate-400"></i>
+        </button>
+        <button id="closeSidebarBtn" class="lg:hidden ml-2 p-2.5 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="px-3 py-1">
+        <div class="relative">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400"></i>
+            <input type="text" id="searchChatInput" placeholder="Search chats..." class="w-full bg-gpt-card/60 text-xs pl-8 pr-3 py-2 rounded-lg border border-transparent focus:border-gpt-border focus:outline-none text-slate-200 placeholder-slate-500">
+        </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-2 py-2 space-y-1 custom-scrollbar" id="chatHistoryContainer"></div>
+
+    <div class="p-3 border-t border-gpt-border space-y-1">
+        <button id="openIdeBtn" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg hover:bg-gpt-hover text-sm text-slate-300">
+            <i class="fa-solid fa-code text-slate-400 w-4"></i><span class="flex-1 text-left">Code Workspace</span>
+        </button>
+        <button id="openSettingsBtn" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg hover:bg-gpt-hover text-sm text-slate-300">
+            <i class="fa-solid fa-sliders text-slate-400 w-4"></i><span class="flex-1 text-left">Settings</span>
+        </button>
+        <button id="exportAllChatsBtn" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg hover:bg-gpt-hover text-sm text-slate-300">
+            <i class="fa-solid fa-download text-slate-400 w-4"></i><span class="flex-1 text-left">Export All</span>
+        </button>
+        <button id="importChatBtn" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg hover:bg-gpt-hover text-sm text-slate-300">
+            <i class="fa-solid fa-file-import text-slate-400 w-4"></i><span class="flex-1 text-left">Import</span>
+        </button>
+        <input type="file" id="importFileInput" class="hidden" accept=".json">
+
+        <div class="pt-2 mt-2 border-t border-gpt-border/50 flex items-center justify-between px-2 py-1.5">
+            <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 rounded-full bg-teal-600 flex items-center justify-center font-bold text-sm text-white shadow-md">AI</div>
+                <div>
+                    <p class="text-xs font-semibold text-slate-200" id="userDisplayName">User</p>
+                    <p class="text-[10px] text-teal-400 font-medium" id="apiStatusIndicator">Demo</p>
+                </div>
+            </div>
+            <div class="relative">
+                <button id="themeToggleBtn" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-moon text-sm" id="themeIcon"></i></button>
+                <div id="themeDropdown" class="hidden absolute right-0 bottom-full mb-2 w-40 bg-gpt-card border border-gpt-border rounded-lg shadow-2xl z-50 p-1 text-xs">
+                    <button class="theme-option w-full text-left px-3 py-2 rounded hover:bg-gpt-hover flex items-center space-x-2" data-theme="light"><i class="fa-solid fa-sun text-yellow-400 w-4"></i>Light</button>
+                    <button class="theme-option w-full text-left px-3 py-2 rounded hover:bg-gpt-hover flex items-center space-x-2" data-theme="dark"><i class="fa-solid fa-moon text-indigo-400 w-4"></i>Dark</button>
+                    <button class="theme-option w-full text-left px-3 py-2 rounded hover:bg-gpt-hover flex items-center space-x-2" data-theme="system"><i class="fa-solid fa-circle-half-stroke text-teal-400 w-4"></i>System</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</aside>
+
+
+<div id="mainWrapper" class="flex-1 flex h-full min-w-0">
+
+<main class="flex-1 flex flex-col h-full min-w-0 bg-gpt-main relative">
+    <header class="h-14 border-b border-gpt-border/60 px-4 flex items-center justify-between bg-gpt-main/90 backdrop-blur-md z-30 sticky top-0">
+        <div class="flex items-center space-x-3">
+            <button id="openSidebarBtn" class="lg:hidden p-2 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-bars text-lg"></i></button>
+            <button id="mainNewChatBtn" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover hidden lg:block" title="New Chat"><i class="fa-regular fa-pen-to-square text-lg"></i></button>
+            <div class="relative inline-block">
+                <button id="modelSelectorBtn" class="flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-gpt-hover">
+                    <span class="font-bold text-base text-slate-200" id="currentModelLabel">GPT-4o</span>
+                    <i class="fa-solid fa-chevron-down text-xs text-slate-400"></i>
+                </button>
+                <div id="modelDropdown" class="hidden absolute left-0 mt-2 w-64 rounded-xl bg-gpt-card border border-gpt-border shadow-2xl z-50 p-1.5 space-y-1">
+                    <div class="model-option p-2.5 rounded-lg hover:bg-gpt-hover cursor-pointer flex items-start space-x-3" data-model="gpt-4o">
+                        <i class="fa-solid fa-bolt text-teal-400 mt-0.5"></i>
+                        <div><div class="font-semibold text-xs">GPT-4o</div><div class="text-[11px] text-slate-400">Complex tasks</div></div>
+                    </div>
+                    <div class="model-option p-2.5 rounded-lg hover:bg-gpt-hover cursor-pointer flex items-start space-x-3" data-model="gpt-3.5-turbo">
+                        <i class="fa-solid fa-leaf text-blue-400 mt-0.5"></i>
+                        <div><div class="font-semibold text-xs">GPT-3.5</div><div class="text-[11px] text-slate-400">Fast</div></div>
+                    </div>
+                    <div class="model-option p-2.5 rounded-lg hover:bg-gpt-hover cursor-pointer flex items-start space-x-3" data-model="gemini-2.0-flash">
+                        <i class="fa-solid fa-star text-yellow-400 mt-0.5"></i>
+                        <div><div class="font-semibold text-xs">Gemini Flash</div><div class="text-[11px] text-slate-400">Fast + cheap</div></div>
+                    </div>
+                    <div class="model-option p-2.5 rounded-lg hover:bg-gpt-hover cursor-pointer flex items-start space-x-3" data-model="deepseek-chat">
+                        <i class="fa-solid fa-brain text-purple-400 mt-0.5"></i>
+                        <div><div class="font-semibold text-xs">DeepSeek</div><div class="text-[11px] text-slate-400">Reasoning</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="flex items-center space-x-1 relative">
+            <button id="headerMoreBtn" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover" title="More options"><i class="fa-solid fa-ellipsis-vertical text-lg"></i></button>
+            <div id="headerMoreMenu" class="hidden absolute right-0 top-full mt-2 w-56 bg-gpt-card border border-gpt-border rounded-lg shadow-2xl z-50 p-1 text-xs">
+                <button id="clearCurrentChatBtn" class="w-full text-left px-3 py-2 rounded hover:bg-rose-500/10 text-rose-400 flex items-center"><i class="fa-solid fa-trash-can w-4 mr-2"></i> Delete Chat</button>
+                <button id="comparisonBtn" class="w-full text-left px-3 py-2 rounded hover:bg-gpt-hover flex items-center"><i class="fa-solid fa-scale-balanced w-4 text-blue-400 mr-2"></i> Compare Models</button>
+                <button id="searchAllBtn" class="w-full text-left px-3 py-2 rounded hover:bg-gpt-hover flex items-center"><i class="fa-solid fa-magnifying-glass-plus w-4 text-yellow-400 mr-2"></i> Search All</button>
+                
+                <div class="relative group">
+                    <button id="exportDropdownBtn" class="w-full text-left px-3 py-2 rounded hover:bg-gpt-hover flex items-center justify-between"><div class="flex items-center"><i class="fa-solid fa-file-arrow-down w-4 text-teal-400 mr-2"></i> Export</div><i class="fa-solid fa-chevron-right text-[10px]"></i></button>
+                    <div id="exportDropdown" class="hidden absolute right-full top-0 mr-1 w-48 bg-gpt-card border border-gpt-border rounded-lg shadow-2xl z-50 p-1 text-xs">
+                        <button class="export-option w-full text-left px-3 py-2 rounded hover:bg-gpt-hover" data-format="json"><i class="fa-solid fa-code text-teal-400 w-4 mr-2"></i>JSON</button>
+                        <button class="export-option w-full text-left px-3 py-2 rounded hover:bg-gpt-hover" data-format="md"><i class="fa-brands fa-markdown text-purple-400 w-4 mr-2"></i>Markdown</button>
+                        <button class="export-option w-full text-left px-3 py-2 rounded hover:bg-gpt-hover" data-format="txt"><i class="fa-solid fa-file-lines text-amber-400 w-4 mr-2"></i>Plain text</button>
+                        <button class="export-option w-full text-left px-3 py-2 rounded hover:bg-gpt-hover" data-format="pdf"><i class="fa-solid fa-file-pdf text-rose-400 w-4 mr-2"></i>Save as PDF</button>
+                        <button class="export-option w-full text-left px-3 py-2 rounded hover:bg-gpt-hover" data-format="print"><i class="fa-solid fa-print text-blue-400 w-4 mr-2"></i>Print</button>
+                    </div>
+                </div>
+                <button id="shareChatBtn" class="w-full text-left px-3 py-2 rounded hover:bg-gpt-hover flex items-center"><i class="fa-solid fa-share-nodes w-4 text-purple-400 mr-2"></i> Share Chat</button>
+                <div class="border-t border-gpt-border/50 my-1"></div>
+                <button id="headerSystemPromptBtn" class="w-full text-left px-3 py-2 rounded hover:bg-gpt-hover flex items-center"><i class="fa-solid fa-robot w-4 text-emerald-400 mr-2"></i> System Prompt</button>
+            </div>
+        </div>
+    </header>
+
+    <div id="messagesContainer" class="flex-1 overflow-y-auto px-4 py-6 custom-scrollbar space-y-6">
+        <div id="emptyState" class="h-full flex flex-col items-center justify-center max-w-2xl mx-auto text-center px-4 space-y-8 my-auto py-12">
+            <div class="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-xl text-2xl font-bold">
+                <i class="fa-solid fa-sparkles text-teal-600"></i>
+            </div>
+            <div>
+                <h2 class="text-2xl font-bold text-slate-100">What can I help with?</h2>
+            </div>
+        </div>
+        <div id="activeMessagesList" class="max-w-3xl mx-auto space-y-6 hidden"></div>
+    </div>
+
+    <div class="p-4 bg-gradient-to-t from-gpt-main via-gpt-main/90 to-transparent z-20">
+        <div class="max-w-3xl mx-auto relative">
+            <div id="attachmentsPreview" class="hidden mb-2 flex flex-wrap gap-1.5"></div>
+            <div class="bg-gpt-card rounded-2xl border border-gpt-border focus-within:border-slate-400 shadow-xl p-2.5">
+                <div class="flex items-end space-x-1">
+                    <button id="attachmentBtn" class="p-2 text-slate-400 hover:text-slate-200 rounded-xl hover:bg-gpt-hover" title="Attach"><i class="fa-solid fa-paperclip text-sm"></i></button>
+                    <input type="file" id="fileInput" class="hidden" multiple accept=".txt,.json,.js,.py,.md,.html,.css,.ts,.jsx,.tsx,.pdf,.png,.jpg,.jpeg,.gif,.webp">
+                    <button id="voiceInputBtn" class="p-2 text-slate-400 hover:text-rose-400 rounded-xl hover:bg-gpt-hover" title="Voice"><i class="fa-solid fa-microphone text-sm"></i></button>
+                    <textarea id="chatInput" rows="1" placeholder="Message ChatGPT..." class="flex-1 bg-transparent text-slate-100 placeholder-slate-500 text-sm focus:outline-none resize-none max-h-48 py-1.5 custom-scrollbar"></textarea>
+                    <button id="promptLibraryBtn" class="p-2 text-slate-400 hover:text-amber-400 rounded-xl hover:bg-gpt-hover" title="Prompts"><i class="fa-solid fa-bookmark text-sm"></i></button>
+                    <button id="webSearchBtn" class="p-2 text-slate-400 hover:text-teal-400 rounded-xl hover:bg-gpt-hover" title="Web"><i class="fa-solid fa-globe text-sm"></i></button>
+                    <button id="sendBtn" disabled class="w-9 h-9 rounded-xl bg-white text-black flex items-center justify-center disabled:opacity-30"><i class="fa-solid fa-arrow-up text-sm font-bold"></i></button>
+                    <button id="stopBtn" class="hidden w-9 h-9 rounded-xl bg-rose-600 text-white items-center justify-center"><i class="fa-solid fa-square text-xs"></i></button>
+                </div>
+                <div class="flex items-center justify-between px-2 pt-2 text-[10px] text-slate-500 border-t border-gpt-border/40 mt-2">
+                    <div class="flex items-center space-x-2">
+                        <span id="webSearchBadge" class="hidden text-teal-400 font-medium flex items-center space-x-1"></span>
+                        <span id="attachmentName" class="hidden text-amber-400 truncate max-w-[150px]"></span>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <span id="saveIndicator" class="text-[10px] text-slate-500"><i class="fa-solid fa-check text-emerald-400 mr-1"></i>Saved</span>
+                        <span id="charCount">0 chars</span>
+                        <span id="costEstimate" class="text-slate-600"></span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</main>
+
+<section id="settingsPage" class="settings-page" aria-label="Settings">
+    <div id="settingsShell" class="sp-shell" data-mview="nav">
+        <header class="sp-header">
+            <button id="settingsBackBtn" class="sp-back" aria-label="Back"><i class="fa-solid fa-arrow-left"></i></button>
+            <h1 id="settingsTitle">Settings</h1>
+            <span id="settingsSaved" class="sp-saved" role="status" aria-live="polite"></span>
+        </header>
+        <div class="sp-body">
+            <nav id="settingsNav" class="sp-nav custom-scrollbar" aria-label="Settings categories">
+                <div class="sp-profile">
+                    <div class="sp-avatar" id="settingsAvatar">U</div>
+                    <div class="sp-profile-name" id="settingsProfileName">User</div>
+                </div>
+                <div class="sp-nav-group">
+                    <div class="sp-group-label">My ChatGPT</div>
+                    <div class="sp-card">
+                        <button class="sp-nav-item" data-section="persona" data-keywords="persona instructions system prompt role character"><i class="fa-solid fa-masks-theater"></i><span class="sp-nav-label">AI Persona</span><span class="sp-val" id="navPersonaVal"></span><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                        <button class="sp-nav-item" data-section="memory" data-keywords="memory remember facts"><i class="fa-solid fa-brain"></i><span class="sp-nav-label">Memory</span><span class="sp-val" id="navMemoryVal"></span><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                    </div>
+                </div>
+                <div class="sp-nav-group">
+                    <div class="sp-group-label">Preferences</div>
+                    <div class="sp-card">
+                        <button class="sp-nav-item" data-section="general" data-keywords="name speech streaming speed web search notifications"><i class="fa-solid fa-gear"></i><span class="sp-nav-label">General</span><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                        <button class="sp-nav-item" data-section="language" data-keywords="language english urdu arabic rtl"><i class="fa-solid fa-language"></i><span class="sp-nav-label">Language</span><span class="sp-val" id="navLanguageVal"></span><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                        <button class="sp-nav-item" data-section="appearance" data-keywords="theme dark light accent color"><i class="fa-solid fa-circle-half-stroke"></i><span class="sp-nav-label">Appearance</span><span class="sp-val" id="navAppearanceVal"></span><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                        <button class="sp-nav-item" data-section="shortcuts" data-keywords="keyboard shortcuts commands slash keys help"><i class="fa-regular fa-keyboard"></i><span class="sp-nav-label">Keyboard shortcuts</span><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                    </div>
+                </div>
+                <div class="sp-nav-group">
+                    <div class="sp-group-label">AI</div>
+                    <div class="sp-card">
+                        <button class="sp-nav-item" data-section="provider" data-keywords="provider model api key openai gemini deepseek openrouter"><i class="fa-solid fa-plug"></i><span class="sp-nav-label">AI provider &amp; model</span><span class="sp-val" id="navProviderVal"></span><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                    </div>
+                </div>
+                <div class="sp-nav-group">
+                    <div class="sp-group-label">Data</div>
+                    <div class="sp-card">
+                        <button class="sp-nav-item" data-section="sharing" data-keywords="share links server revoke"><i class="fa-solid fa-share-nodes"></i><span class="sp-nav-label">Sharing</span><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                        <button class="sp-nav-item" data-section="data" data-keywords="privacy encryption analytics delete clear data storage"><i class="fa-solid fa-shield-halved"></i><span class="sp-nav-label">Data &amp; privacy</span><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                    </div>
+                </div>
+                <div id="settingsNoResults" class="sp-empty" hidden>No settings match your search.</div>
+                <div class="sp-search">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input id="settingsSearchInput" type="search" placeholder="Search settings" aria-label="Search settings" autocomplete="off">
+                </div>
+            </nav>
+
+            <div id="settingsContent" class="sp-content custom-scrollbar">
+                <section class="sp-section" data-section="persona" hidden>
+                    <p class="sp-intro">Choose how the assistant behaves. The selected persona sets the system prompt used for new messages.</p>
+                    <div id="personasGrid" class="persona-grid"></div>
+                    <div class="sp-group-label">Instructions</div>
+                    <div class="sp-card sp-pad">
+                        <label class="sp-label" for="settingsSystemPromptInput">System prompt (AI instructions)</label>
+                        <textarea id="settingsSystemPromptInput" rows="5" class="sp-textarea" placeholder="You are a helpful AI assistant..."></textarea>
+                        <div class="sp-actions"><button id="resetPersonaBtn" class="sp-btn" type="button"><i class="fa-solid fa-rotate-left"></i>Reset to default</button></div>
+                    </div>
+                    <div class="sp-group-label">Create your own persona</div>
+                    <div class="sp-card sp-pad">
+                        <div class="sp-field-row">
+                            <input id="personaIconInput" class="sp-input sp-input-icon" maxlength="4" placeholder="🤖" aria-label="Persona icon">
+                            <input id="personaNameInput" class="sp-input" maxlength="40" placeholder="Persona name" aria-label="Persona name">
+                        </div>
+                        <textarea id="personaPromptInput" rows="3" class="sp-textarea" placeholder="Describe how this persona should respond..." aria-label="Persona instructions"></textarea>
+                        <div class="sp-actions"><button id="addPersonaBtn" class="sp-btn sp-btn-primary" type="button"><i class="fa-solid fa-plus"></i>Add persona</button></div>
+                    </div>
+                </section>
+
+                <section class="sp-section" data-section="memory" hidden>
+                    <p class="sp-intro">Facts the assistant should remember in every conversation.</p>
+                    <div class="sp-card sp-pad">
+                        <div class="sp-field-row">
+                            <input id="newMemoryInput" class="sp-input" placeholder="e.g. I'm a JavaScript developer" aria-label="New memory">
+                            <button id="addMemoryBtn" class="sp-btn sp-btn-primary" type="button" aria-label="Add memory"><i class="fa-solid fa-plus"></i>Add</button>
+                        </div>
+                        <div id="memoryList" class="space-y-1 mt-3"></div>
+                    </div>
+                </section>
+
+                <section class="sp-section" data-section="general" hidden>
+                    <div class="sp-card">
+                        <label class="sp-row" for="userNameInput"><div class="sp-row-main"><div class="sp-row-title">Your name</div><div class="sp-row-desc">Shown on your messages</div></div><input id="userNameInput" class="sp-input sp-input-sm" placeholder="Your name" autocomplete="name"></label>
+                        <div class="sp-row sp-row-stack"><div class="sp-row-main"><div class="sp-row-title">Speech speed <span id="speechRateLabel" class="sp-val">1.0x</span></div><div class="sp-row-desc">Voice speed for Read Aloud</div></div><input id="speechRateInput" type="range" min="0.5" max="2" step="0.1" value="1" class="sp-range" aria-label="Speech speed"></div>
+                        <div class="sp-row sp-row-stack"><div class="sp-row-main"><div class="sp-row-title">Streaming speed <span id="streamSpeedLabel" class="sp-val">1.0x</span></div><div class="sp-row-desc">How fast replies appear</div></div><input id="streamSpeedInput" type="range" min="0.3" max="3" step="0.1" value="1" class="sp-range" aria-label="Streaming speed"></div>
+                        <label class="sp-row"><div class="sp-row-main"><div class="sp-row-title">Real web search</div><div class="sp-row-desc">Uses DuckDuckGo (no key required)</div></div><span class="sp-switch"><input type="checkbox" id="realWebSearchToggle"><span class="sp-slider"></span></span></label>
+                        <label class="sp-row"><div class="sp-row-main"><div class="sp-row-title">Show thinking process</div><div class="sp-row-desc">AI writes its reasoning first. Slower replies, so keep it off for fast answers</div></div><span class="sp-switch"><input type="checkbox" id="showThinkingToggle"><span class="sp-slider"></span></span></label>
+                        <label class="sp-row"><div class="sp-row-main"><div class="sp-row-title">Desktop notifications</div><div class="sp-row-desc">Notify when a response is ready</div></div><span class="sp-switch"><input type="checkbox" id="notificationsToggle"><span class="sp-slider"></span></span></label>
+                    </div>
+                </section>
+
+                <section class="sp-section" data-section="language" hidden>
+                    <div class="sp-card" role="radiogroup" aria-label="Language">
+                        <button class="lang-option sp-row sp-row-btn" data-lang="en" role="radio"><span class="sp-flag">🇬🇧</span><span class="sp-row-title">English</span><i class="fa-solid fa-check sp-check"></i></button>
+                        <button class="lang-option sp-row sp-row-btn" data-lang="ur" role="radio"><span class="sp-flag">🇵🇰</span><span class="sp-row-title">اردو</span><i class="fa-solid fa-check sp-check"></i></button>
+                        <button class="lang-option sp-row sp-row-btn" data-lang="ar" role="radio"><span class="sp-flag">🇸🇦</span><span class="sp-row-title">العربية</span><i class="fa-solid fa-check sp-check"></i></button>
+                    </div>
+                </section>
+
+                <section class="sp-section" data-section="appearance" hidden>
+                    <div class="sp-card">
+                        <div class="sp-row sp-row-stack"><div class="sp-row-main"><div class="sp-row-title">Theme</div></div>
+                            <div class="sp-seg" role="radiogroup" aria-label="Theme">
+                                <button class="sp-theme-opt" data-theme="light" role="radio"><i class="fa-solid fa-sun"></i>Light</button>
+                                <button class="sp-theme-opt" data-theme="dark" role="radio"><i class="fa-solid fa-moon"></i>Dark</button>
+                                <button class="sp-theme-opt" data-theme="system" role="radio"><i class="fa-solid fa-circle-half-stroke"></i>System</button>
+                            </div>
+                        </div>
+                        <div class="sp-row"><div class="sp-row-main"><div class="sp-row-title">Accent color</div><div class="sp-row-desc">Used for highlights and switches</div></div><div class="sp-inline"><input type="color" id="accentColorInput" value="#10a37f" class="sp-color" aria-label="Accent color"><button id="accentResetBtn" class="sp-btn" type="button">Reset</button></div></div>
+                    </div>
+                </section>
+
+                <section class="sp-section" data-section="shortcuts" hidden>
+                    <div class="sp-card">
+                        <div class="sp-row"><span class="sp-row-title">New chat</span><kbd>Ctrl + K</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">Toggle sidebar</span><kbd>Ctrl + B</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">Search all</span><kbd>Ctrl + Shift + F</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">Send</span><kbd>Enter</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">New line</span><kbd>Shift + Enter</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">Slash commands</span><kbd>/</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">Open shortcuts</span><kbd>?</kbd></div>
+                    </div>
+                    <div class="sp-group-label">Code workspace</div>
+                    <div class="sp-card">
+                        <div class="sp-row"><span class="sp-row-title">Save file</span><kbd>Ctrl + S</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">Run / preview</span><kbd>Ctrl + Enter</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">Find / replace</span><kbd>Ctrl + F</kbd><kbd>Ctrl + H</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">Auto-complete</span><kbd>Ctrl + Space</kbd></div>
+                        <div class="sp-row"><span class="sp-row-title">Toggle comment</span><kbd>Ctrl + /</kbd></div>
+                    </div>
+                    <div class="sp-group-label">Slash commands</div>
+                    <div class="sp-card sp-pad sp-cmds"><code>/new</code> <code>/clear</code> <code>/export</code> <code>/export-md</code> <code>/pdf</code> <code>/share</code> <code>/ide</code> <code>/system</code> <code>/analytics</code> <code>/help</code> <code>/theme</code> <code>/personas</code> <code>/compare</code> <code>/memory</code></div>
+                </section>
+
+                <section class="sp-section" data-section="provider" hidden>
+                    <div class="sp-card sp-pad">
+                        <label class="sp-label" for="providerSelect">AI provider</label>
+                        <select id="providerSelect" class="sp-input">
+                            <option value="simulated">🟢 Simulated (Demo)</option>
+                            <option value="openai">⚡ OpenAI</option>
+                            <option value="gemini">✨ Google Gemini</option>
+                            <option value="openrouter">🔀 OpenRouter</option>
+                            <option value="deepseek">🧠 DeepSeek</option>
+                        </select>
+                        <p id="providerHint" class="sp-hint"></p>
+                        <div id="apiKeyGroup" class="hidden">
+                            <label class="sp-label" for="apiKeyInput">API key</label>
+                            <div class="sp-field-row">
+                                <input type="password" id="apiKeyInput" class="sp-input" placeholder="sk-..." autocomplete="off" spellcheck="false">
+                                <button id="toggleApiKeyVisibilityBtn" type="button" class="sp-btn" aria-label="Show or hide API key"><i class="fa-regular fa-eye text-xs"></i></button>
+                            </div>
+                            <p id="apiKeyHelp" class="sp-hint"></p>
+                        </div>
+                        <div id="modelGroup" class="hidden">
+                            <label class="sp-label" for="modelInput">Model</label>
+                            <div class="sp-field-row">
+                                <input type="text" id="modelInput" class="sp-input" placeholder="gpt-4o" autocomplete="off" spellcheck="false">
+                                <button id="loadModelsBtn" type="button" class="sp-btn"><i class="fa-solid fa-rotate"></i>Load</button>
+                            </div>
+                            <div id="modelsList" class="hidden sp-models custom-scrollbar"></div>
+                            <p id="modelHint" class="sp-hint"></p>
+                        </div>
+                        <p class="sp-hint">Keys are stored only in this browser and sent only to the provider you choose.</p>
+                    </div>
+                </section>
+
+                <section class="sp-section" data-section="sharing" hidden>
+                    <p class="sp-intro">Sharing is always your choice. A chat is only shared when you press Share chat, and you can stop sharing any time.</p>
+                    <div class="sp-card sp-pad">
+                        <label class="sp-label" for="shareServerInput">Share server URL (optional)</label>
+                        <div class="sp-field-row">
+                            <input id="shareServerInput" class="sp-input" type="url" placeholder="https://your-share-server.example.com" autocomplete="off" spellcheck="false">
+                            <button id="testShareServerBtn" type="button" class="sp-btn">Test</button>
+                        </div>
+                        <p id="shareServerStatus" class="sp-status"></p>
+                        <p class="sp-hint">With a server (see share-server.js) links are short and can be revoked or set to expire. Without one, a self-contained link is created that cannot be revoked.</p>
+                    </div>
+                    <div class="sp-group-label">Your shared chats</div>
+                    <div id="sharesList" class="sp-card"></div>
+                </section>
+
+                <section class="sp-section" data-section="data" hidden>
+                    <div class="sp-card">
+                        <label class="sp-row"><div class="sp-row-main"><div class="sp-row-title">Encrypt local storage</div><div class="sp-row-desc">Obfuscate data at rest on this device</div></div><span class="sp-switch"><input type="checkbox" id="encryptionToggle"><span class="sp-slider"></span></span></label>
+                        <button id="openAnalyticsBtn" class="sp-row sp-row-btn" type="button"><div class="sp-row-main"><div class="sp-row-title">Usage analytics</div><div class="sp-row-desc">Messages and tokens over time</div></div><i class="fa-solid fa-chevron-right sp-chev"></i></button>
+                    </div>
+                    <div class="sp-group-label">Danger zone</div>
+                    <div class="sp-card sp-pad">
+                        <p class="sp-hint">Deletes all chats, settings, memories and code workspace files stored on this device.</p>
+                        <button id="clearAllDataBtn" class="sp-btn sp-btn-danger" type="button"><i class="fa-regular fa-trash-can"></i>Clear all data</button>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+</section>
+
+<aside id="artifactPanel"
+       class="w-1/2 flex-shrink-0 border-l border-gpt-border bg-gpt-sidebar flex-col h-full min-w-0"
+       role="region" aria-label="Artifact Preview">
+    <div class="h-14 border-b border-gpt-border/60 px-4 flex items-center justify-between bg-gpt-sidebar flex-shrink-0">
+        <div class="flex items-center space-x-2 min-w-0 flex-1">
+            <i class="fa-solid fa-cube text-teal-400 flex-shrink-0"></i>
+            <span class="font-semibold text-sm text-slate-200 truncate">Artifact Preview</span>
+            <span id="artifactLangBadge"
+                  class="text-[10px] px-2 py-0.5 rounded bg-gpt-card text-slate-400 flex-shrink-0">HTML</span>
+        </div>
+        <div class="flex items-center space-x-1 flex-shrink-0">
+            <button id="artifactReloadBtn" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover" title="Reload">
+                <i class="fa-solid fa-rotate text-sm"></i>
+            </button>
+            <button id="artifactOpenFullBtn" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover" title="Open in new tab">
+                <i class="fa-solid fa-arrow-up-right-from-square text-sm"></i>
+            </button>
+            <button id="artifactCloseBtn" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover" title="Close (Esc)">
+                <i class="fa-solid fa-xmark text-sm"></i>
+            </button>
+        </div>
+    </div>
+    <div class="flex-1 bg-white relative min-h-0">
+        <iframe id="artifactIframe" title="Preview"
+                class="w-full h-full border-0"
+                sandbox="allow-scripts allow-forms allow-modals allow-popups"></iframe>
+    </div>
+    <div id="artifactErrorBar" class="hidden artifact-error" role="alert"></div>
+</aside>
+
+</div><div id="promptLibraryModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-gpt-card border border-gpt-border rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh]">
+        <div class="p-4 border-b border-gpt-border flex items-center justify-between">
+            <h3 class="font-bold text-base"><i class="fa-solid fa-bookmark text-amber-400 mr-2"></i>Prompt Library</h3>
+            <button id="closePromptLibBtn" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-4 border-b border-gpt-border space-y-2">
+            <input type="text" id="newPromptTitle" placeholder="Name..." class="w-full bg-gpt-main border border-gpt-border rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-teal-500">
+            <textarea id="newPromptText" rows="3" placeholder="Prompt text..." class="w-full bg-gpt-main border border-gpt-border rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-teal-500 resize-none"></textarea>
+            <button id="addPromptBtn" class="w-full bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold py-2 rounded-lg">+ Save</button>
+        </div>
+        <div id="promptList" class="p-3 space-y-1.5 overflow-y-auto custom-scrollbar flex-1"></div>
+    </div>
+</div>
+
+<div id="bookmarkPanel" class="fixed right-0 top-0 h-full w-72 bg-gpt-sidebar border-l border-gpt-border z-40 transform translate-x-full transition-transform duration-300 overflow-y-auto custom-scrollbar hidden">
+    <div class="p-3 border-b border-gpt-border flex items-center justify-between sticky top-0 bg-gpt-sidebar z-10">
+        <h3 class="font-bold text-sm"><i class="fa-solid fa-bookmark text-amber-400 mr-2"></i>Bookmarks</h3>
+        <button id="closeBookmarkBtn" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div id="bookmarkList" class="p-2 space-y-1.5"></div>
+</div>
+
+<div id="searchAllModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-gpt-card border border-gpt-border rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[80vh]">
+        <div class="p-4 border-b border-gpt-border flex items-center justify-between">
+            <h3 class="font-bold text-base"><i class="fa-solid fa-magnifying-glass-plus text-yellow-400 mr-2"></i>Search All Messages</h3>
+            <button id="closeSearchAllBtn" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-4 border-b border-gpt-border">
+            <input type="text" id="searchAllInput" placeholder="Search every message..." class="w-full bg-gpt-main border border-gpt-border rounded-lg px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-teal-500">
+        </div>
+        <div id="searchAllResults" class="p-3 space-y-1.5 overflow-y-auto custom-scrollbar flex-1"></div>
+    </div>
+</div>
+
+<div id="comparisonModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-gpt-card border border-gpt-border rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
+        <div class="p-4 border-b border-gpt-border flex items-center justify-between">
+            <h3 class="font-bold text-base"><i class="fa-solid fa-scale-balanced text-blue-400 mr-2"></i>Compare Models</h3>
+            <button id="closeComparisonBtn" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-4 border-b border-gpt-border space-y-2">
+            <textarea id="comparePrompt" rows="2" placeholder="Enter prompt..." class="w-full bg-gpt-main border border-gpt-border rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-teal-500 resize-none"></textarea>
+            <div class="grid grid-cols-2 gap-2">
+                <input type="text" id="compareModelA" placeholder="Model A (gpt-4o)" class="bg-gpt-main border border-gpt-border rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-teal-500">
+                <input type="text" id="compareModelB" placeholder="Model B (gemini-2.0-flash)" class="bg-gpt-main border border-gpt-border rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500">
+            </div>
+            <button id="compareRunBtn" class="w-full bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold py-2 rounded-lg">Run Comparison</button>
+        </div>
+        <div id="compareResults" class="p-4 overflow-y-auto custom-scrollbar flex-1"></div>
+    </div>
+</div>
+
+<div id="folderModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-gpt-card border border-gpt-border rounded-2xl w-full max-w-sm shadow-2xl">
+        <div class="p-4 border-b border-gpt-border flex items-center justify-between">
+            <h3 class="font-bold text-base"><i class="fa-solid fa-folder text-amber-400 mr-2"></i>Folders</h3>
+            <button id="closeFolderBtn" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-4 space-y-3">
+            <div class="flex space-x-2">
+                <input type="text" id="folderNameInput" placeholder="Folder name..." class="flex-1 bg-gpt-main border border-gpt-border rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-teal-500">
+                <button id="createFolderBtn" class="px-3 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs">+</button>
+            </div>
+            <div id="foldersList" class="space-y-1"></div>
+        </div>
+    </div>
+</div>
+
+<div id="analyticsModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-gpt-card border border-gpt-border rounded-2xl w-full max-w-lg shadow-2xl">
+        <div class="p-4 border-b border-gpt-border flex items-center justify-between">
+            <h3 class="font-bold text-base"><i class="fa-solid fa-chart-line text-purple-400 mr-2"></i>Usage Analytics</h3>
+            <button id="closeAnalyticsBtn" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div id="analyticsBody" class="p-6"></div>
+    </div>
+</div>
+
+<div id="noteModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-gpt-card border border-gpt-border rounded-2xl w-full max-w-md shadow-2xl">
+        <div class="p-4 border-b border-gpt-border flex items-center justify-between">
+            <h3 class="font-bold text-base"><i class="fa-solid fa-note-sticky text-yellow-400 mr-2"></i>Message Note</h3>
+            <button id="closeNoteBtn" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-gpt-hover"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-4 space-y-3">
+            <textarea id="noteInput" rows="4" placeholder="Add your note..." class="w-full bg-gpt-main border border-gpt-border rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-teal-500 resize-none"></textarea>
+            <div class="flex space-x-2">
+                <button id="saveNoteBtn" class="flex-1 bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold py-2 rounded-lg">Save</button>
+                <button id="deleteNoteBtn" class="px-4 py-2 bg-rose-600/20 text-rose-400 border border-rose-600/30 rounded-lg text-xs">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div id="idePage" class="hidden" aria-label="Code workspace"></div>
+<div id="sharedView" class="shared-view hidden" aria-label="Shared conversation"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+<script src="utils.js"></script>
+<script src="storage.js"></script>
+<script src="aiEngine.js"></script>
+<script src="pdf.js"></script>
+<script src="share.js"></script>
+<script src="chat.js"></script>
+<script src="ide.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
