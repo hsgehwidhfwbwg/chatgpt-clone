@@ -1,7 +1,5 @@
 const AIEngine = {
     _controller: null,
-    _BACKEND_URL: 'https://chatgpt-clone-six-theta.vercel.app/api/chat/',
-    
     _QUIZ_JSON_INSTRUCTION: 'You must respond ONLY with a valid JSON object containing an array of questions. Format: { "quiz": [ { "q": "question text", "options": ["Option A text", "Option B text", "Option C text", "Option D text"], "answer": "correct option text exactly as it appears in options" } ] }',
     
     _THINKING_INSTRUCTION: `IMPORTANT INSTRUCTIONS:
@@ -106,58 +104,132 @@ Do not skip these tags.`,
             }
         }
 
-        if (provider !== 'simulated') {
+        if (provider !== 'simulated' && apiKey) {
             try {
-                const call = () => this.fetchViaBackend(provider, messages, model, systemPrompt, onChunk);
+                const call = () => provider === 'gemini'
+                    ? this.fetchGemini(apiKey, messages, model, systemPrompt, onChunk)
+                    : this.fetchOpenAICompatible(provider, apiKey, messages, model, systemPrompt, onChunk);
                 return await Utils.retryWithBackoff(call, 3, 1000);
             } catch (err) {
                 if (err.name === 'AbortError') throw err;
-                console.warn(`${provider} backend failed → simulation:`, err);
+                console.warn(`${provider} failed → simulation:`, err);
                 if (window.ChatRenderer) ChatRenderer.showToast(`${provider} failed — simulation`);
             }
         } else {
-            console.warn('[AIEngine] Falling back to simulated mode.');
+            console.warn('[AIEngine] Falling back to simulated mode. provider=', provider, '| hasKey=', !!apiKey);
         }
 
         return await this.generateSimulatedResponse(messages, model, systemPrompt, webSearchActive, onChunk, settings.streamSpeed || 1.0);
     },
-    async fetchViaBackend(provider, messages, model, systemPrompt, onChunk) {
+    async fetchOpenAICompatible(providerKey, apiKey, messages, model, systemPrompt, onChunk) {
+        const cfg = this.PROVIDERS[providerKey];
+        if (!cfg) throw new Error(`Unknown: ${providerKey}`);
         const payloadMessages = [
             { role: 'system', content: systemPrompt },
             ...messages.map((m) => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }))
         ];
         this._controller = new AbortController();
-        const response = await fetch(this._BACKEND_URL, {
+        const response = await fetch(cfg.endpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, model: model || this.PROVIDERS[provider]?.defaultModel, messages: payloadMessages }),
+            headers: { 'Content-Type': 'application/json', ...cfg.authHeader(apiKey) },
+            body: JSON.stringify({ model: model || cfg.defaultModel, messages: payloadMessages, stream: true, temperature: 0.7 }),
             signal: this._controller.signal
         });
         if (!response.ok) {
             const errText = await response.text().catch(() => response.statusText);
-            throw Object.assign(new Error(`Backend error ${response.status}: ${errText.slice(0, 200)}`), { status: response.status });
+            throw Object.assign(new Error(`${providerKey} ${response.status}: ${errText.slice(0, 200)}`), { status: response.status });
         }
-        const data = await response.json();
-        const fullText = data.choices?.[0]?.message?.content || data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        if (onChunk && fullText) {
-            onChunk(fullText, fullText);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let fullText = ''; let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const dataStr = line.slice(6).trim();
+                if (!dataStr || dataStr === '[DONE]') continue;
+                try {
+                    const parsed = JSON.parse(dataStr);
+                    let token = parsed.choices?.[0]?.delta?.content || '';
+                    if (typeof token === 'object' && token !== null) {
+                        token = JSON.stringify(token);
+                    }
+                    if (token) { fullText += token; onChunk?.(token, fullText); }
+                } catch {}
+            }
         }
         this._controller = null;
         return fullText;
     },
-    async fetchOpenAICompatible(providerKey, apiKey, messages, model, systemPrompt, onChunk) {
-        return this.fetchViaBackend(providerKey, messages, model, systemPrompt, onChunk);
-    },
     async fetchGemini(apiKey, messages, model, systemPrompt, onChunk) {
-        return this.fetchViaBackend('gemini', messages, model, systemPrompt, onChunk);
+        const cfg = this.PROVIDERS.gemini;
+        const useModel = model || cfg.defaultModel;
+        const contents = messages.map((m) => ({
+            role: m.sender === 'user' ? 'user' : 'model',
+            parts: [{ text: m.text }]
+        }));
+        const body = {
+            contents,
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            generationConfig: { temperature: 0.7 }
+        };
+        this._controller = new AbortController();
+        const response = await fetch(cfg.endpoint(useModel, apiKey), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: this._controller.signal
+        });
+        if (!response.ok) {
+            const errText = await response.text().catch(() => response.statusText);
+            throw Object.assign(new Error(`gemini ${response.status}: ${errText.slice(0, 200)}`), { status: response.status });
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let fullText = ''; let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const dataStr = line.slice(6).trim();
+                if (!dataStr || dataStr === '[DONE]') continue;
+                try {
+                    const parsed = JSON.parse(dataStr);
+                    let token = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    if (typeof token === 'object' && token !== null) {
+                        token = JSON.stringify(token);
+                    }
+                    if (token) { fullText += token; onChunk?.(token, fullText); }
+                } catch {}
+            }
+        }
+        this._controller = null;
+        return fullText;
     },
     async listModels(providerKey, apiKey) {
         const cfg = this.PROVIDERS[providerKey];
         if (!cfg) throw new Error(`Unknown: ${providerKey}`);
         if (providerKey === 'gemini') {
-            return ['gemini-2.0-flash', 'gemini-1.5-pro'];
+            const res = await fetch(cfg.modelsEndpoint(apiKey));
+            if (!res.ok) throw new Error(`Gemini ${res.status}`);
+            const data = await res.json();
+            return (data.models || [])
+                .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+                .map((m) => m.name.replace(/^models\//, ''));
         }
-        return ['gpt-4o', 'gpt-3.5-turbo', 'deepseek-chat'];
+        const res = await fetch(cfg.modelsEndpoint, { headers: cfg.authHeader(apiKey) });
+        if (!res.ok) throw new Error(`${providerKey} ${res.status}`);
+        const data = await res.json();
+        const list = data.data || data.models || [];
+        return list.map((m) => m.id || m.name).filter(Boolean).sort();
     },
     async generateSimulatedResponse(messages, model, systemPrompt, webSearchActive, onChunk, speed = 1.0) {
         const lastUserMsg = [...messages].reverse().find((m) => m.sender === 'user')?.text || '';
@@ -313,4 +385,4 @@ Want me to expand?`;
         }
         return currentText;
     }
-}
+};
