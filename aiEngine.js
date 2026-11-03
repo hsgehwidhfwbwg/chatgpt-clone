@@ -1,6 +1,6 @@
 const AIEngine = {
     _controller: null,
-    _BACKEND_URL: 'https://chatgpt-clone-six-theta.vercel.app/api/chat',
+    _BACKEND_URL: 'https://chatgpt-clone-six-theta.vercel.app/api/chat/',
     
     _QUIZ_JSON_INSTRUCTION: 'You must respond ONLY with a valid JSON object containing an array of questions. Format: { "quiz": [ { "q": "question text", "options": ["Option A text", "Option B text", "Option C text", "Option D text"], "answer": "correct option text exactly as it appears in options" } ] }',
     
